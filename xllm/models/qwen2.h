@@ -19,31 +19,24 @@ limitations under the License.
 #if defined(USE_NPU)
 #include "core/layers/npu/qwen2_decoder_layer.h"
 #endif
-#include "qwen_base.h"
+#include "llm_model_base.h"
 
 // QWen2 model compatible with huggingface weights
 // ref to:
 // https://github.com/huggingface/transformers/blob/v4.43.3/src/transformers/models/qwen2/modeling_qwen2.py
 namespace xllm::hf {
 
-class QWen2DecoderLayerImpl : public QWenDecoderLayerImplBase<Qwen2Decoder> {
+class QWen2DecoderLayerImpl : public LlmDecoderLayerImplBase<Qwen2Decoder> {
  public:
-  QWen2DecoderLayerImpl(const ModelContext& context)
-      : QWenDecoderLayerImplBase<Qwen2Decoder>(context) {}
+  QWen2DecoderLayerImpl(const ModelContext& context, const int32_t i)
+      : LlmDecoderLayerImplBase<Qwen2Decoder>(context, i) {}
 };
 TORCH_MODULE(QWen2DecoderLayer);
 
-torch::Tensor get_qwen2_rotary_embedding(int64_t dim,
-                                         int64_t seq_len,
-                                         double rope_theta,
-                                         const torch::TensorOptions& options) {
-  return get_qwen_concat_rotary_embedding(dim, seq_len, rope_theta, options);
-}
-
-class QWen2ModelImpl : public QWenModelImplBase<QWen2DecoderLayer> {
+class QWen2ModelImpl : public LlmModelImplBase<QWen2DecoderLayer> {
  public:
   QWen2ModelImpl(const ModelContext& context)
-      : QWenModelImplBase<QWen2DecoderLayer>("qwen2",
+      : LlmModelImplBase<QWen2DecoderLayer>("qwen2",
                                              context.get_model_args()) {
     // register submodules
     auto model_args = context.get_model_args();
@@ -56,7 +49,7 @@ class QWen2ModelImpl : public QWenModelImplBase<QWen2DecoderLayer> {
     norm_ = register_module("norm", RmsNorm(context));
 
     atb_pos_emb_ = AtbRotaryEmbedding(context);
-    cos_sin_ = get_qwen2_rotary_embedding(
+    cos_sin_ = get_concat_rotary_embedding(
         model_args.hidden_size() / model_args.n_heads(),
         model_args.max_position_embeddings(),
         model_args.rope_theta(),
@@ -67,7 +60,7 @@ class QWen2ModelImpl : public QWenModelImplBase<QWen2DecoderLayer> {
                                    /*mask_value=*/mask_value);
 
     for (int32_t i = 0; i < model_args.n_layers(); i++) {
-      auto block = QWen2DecoderLayer(context);
+      auto block = QWen2DecoderLayer(context, i);
       layers_.push_back(block);
       blocks_->push_back(block);
     }
@@ -75,10 +68,10 @@ class QWen2ModelImpl : public QWenModelImplBase<QWen2DecoderLayer> {
 };
 TORCH_MODULE(QWen2Model);
 
-class QWen2ForCausalLMImpl : public QWenForCausalLMImplBase<QWen2Model> {
+class QWen2ForCausalLMImpl : public LlmForCausalLMImplBase<QWen2Model> {
  public:
   QWen2ForCausalLMImpl(const ModelContext& context)
-      : QWenForCausalLMImplBase<QWen2Model>(context) {}
+      : LlmForCausalLMImplBase<QWen2Model>(context) {}
 };
 TORCH_MODULE(QWen2ForCausalLM);
 

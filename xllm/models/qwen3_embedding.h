@@ -7,10 +7,10 @@
 
 namespace xllm::hf {
 
-class QWen3ForEmbeddingImpl : public QWenForCausalLMImplBase<QWen3Model> {
+class QWen3ForEmbeddingImpl : public LlmForCausalLMImplBase<Qwen3Model> {
  public:
   QWen3ForEmbeddingImpl(const ModelContext& context)
-      : QWenForCausalLMImplBase<QWen3Model>(context),
+      : LlmForCausalLMImplBase<Qwen3Model>(context),
         options_(context.get_tensor_options()) {}
 
   torch::Tensor pooler(const torch::Tensor& hidden_states,

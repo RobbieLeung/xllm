@@ -36,7 +36,8 @@ cc_library(
     $<$<BOOL:${USE_NPU}>:qwen2_5_vl.h>
     $<$<BOOL:${USE_NPU}>:qwen3.h>
     $<$<BOOL:${USE_NPU}>:qwen3_moe.h>
-    $<$<BOOL:${USE_NPU}>:qwen_base.h>
+    $<$<BOOL:${USE_NPU}>:glm4_moe.h>
+    $<$<BOOL:${USE_NPU}>:llm_model_base.h>
   SRCS
     model_registry.cpp
   DEPS

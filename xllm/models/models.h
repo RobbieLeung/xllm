@@ -29,5 +29,6 @@ limitations under the License.
 #include "qwen3.h"               // IWYU pragma: keep
 #include "qwen3_embedding.h"     // IWYU pragma: keep
 #include "qwen3_moe.h"           // IWYU pragma: keep
-#include "qwen_base.h"           // IWYU pragma: keep
+#include "llm_model_base.h"      // IWYU pragma: keep
+#include "glm4_moe.h"            // IWYU pragma: keep
 #endif

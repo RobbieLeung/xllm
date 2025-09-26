@@ -50,8 +50,8 @@ class Qwen3DecoderImpl : public torch::nn::Module, public ATBBase {
   using RunTaskFunc =
       std::function<void(const std::string& taskName, Task task)>;
 
-  explicit Qwen3DecoderImpl(const ModelContext& context);
-
+  explicit Qwen3DecoderImpl(const ModelContext& context,
+                            const int32_t layer_id);
   ~Qwen3DecoderImpl() {};
 
   void load_state_dict(const StateDict& state_dict);
@@ -108,6 +108,7 @@ class Qwen3DecoderImpl : public torch::nn::Module, public ATBBase {
   at::Tensor at_placeholder_;
 
   int device_id_;
+  int32_t layer_id_;
   int rank_id_;
   std::vector<std::shared_ptr<at::Tensor>> prefill_tensor_storage_;
   std::vector<std::shared_ptr<at::Tensor>> decode_tensor_storage_;
@@ -120,10 +121,11 @@ class Qwen3Decoder : public torch::nn::ModuleHolder<Qwen3DecoderImpl> {
   using torch::nn::ModuleHolder<Qwen3DecoderImpl>::ModuleHolder;
   using Impl __attribute__((__unused__)) = Qwen3DecoderImpl;
 
-  Qwen3Decoder(const ModelContext& context);
+  Qwen3Decoder(const ModelContext& context,const int32_t layer_id);
 };
 
 std::shared_ptr<Qwen3DecoderImpl> create_qwen3_decode_layer(
-    const ModelContext& context);
+    const ModelContext& context,
+    int32_t layer_id);
 
 }  // namespace xllm::hf

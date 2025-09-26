@@ -108,8 +108,8 @@ class Qwen2DecoderImpl : public torch::nn::Module, public ATBBase {
   using RunTaskFunc =
       std::function<void(const std::string& taskName, Task task)>;
 
-  explicit Qwen2DecoderImpl(const ModelContext& context);
-
+  explicit Qwen2DecoderImpl(const ModelContext& context,
+                               const int32_t layer_id);
   ~Qwen2DecoderImpl() {};
 
   TransposeType check_transpose(at::Tensor& tensor);
@@ -165,6 +165,8 @@ class Qwen2DecoderImpl : public torch::nn::Module, public ATBBase {
   at::Tensor at_placeholder_;
 
   int device_id_;
+  int32_t layer_id_;
+  
   std::vector<std::shared_ptr<at::Tensor>> prefill_tensor_storage_;
   std::vector<std::shared_ptr<at::Tensor>> decode_tensor_storage_;
   std::vector<std::shared_ptr<std::vector<int>>> prefill_vector_storage_;
@@ -176,10 +178,11 @@ class Qwen2Decoder : public torch::nn::ModuleHolder<Qwen2DecoderImpl> {
   using torch::nn::ModuleHolder<Qwen2DecoderImpl>::ModuleHolder;
   using Impl __attribute__((__unused__)) = Qwen2DecoderImpl;
 
-  Qwen2Decoder(const ModelContext& context);
+  Qwen2Decoder(const ModelContext& context,const int32_t layer_id);
 };
 
 std::shared_ptr<Qwen2DecoderImpl> create_qwen2_decode_layer(
-    const ModelContext& context);
+    const ModelContext& context,
+    int32_t layer_id);
 
 }  // namespace xllm::hf

@@ -174,8 +174,9 @@ static std::map<int, int> WEIGHT_SHARD_W8A8 = {{IN_Q_WEIGHT, 0},
                                                {IN_MLP_CPROJ_WEIGHT, 1}};
 
 std::shared_ptr<Qwen3DecoderImpl> create_qwen3_decode_layer(
-    const ModelContext& context) {
-  return std::make_shared<Qwen3DecoderImpl>(context);
+    const ModelContext& context,
+    int32_t layer_id) {
+  return std::make_shared<Qwen3DecoderImpl>(context,layer_id);
 }
 
 void Qwen3DecoderImpl::param_from_args(atb_speed::qwen::QwenLayerParam& param,
@@ -269,8 +270,10 @@ void Qwen3DecoderImpl::initialize_quantization_parameters(
   }
 }
 
-Qwen3DecoderImpl::Qwen3DecoderImpl(const ModelContext& context)
-    : ATBBase(context) {
+Qwen3DecoderImpl::Qwen3DecoderImpl(const ModelContext& context,
+                                   const int32_t layer_id)
+    : ATBBase(context),
+      layer_id_(layer_id) {
   auto model_args = context.get_model_args();
   auto parallel_args = context.get_parallel_args();
   auto options = context.get_tensor_options();
@@ -426,7 +429,7 @@ void Qwen3DecoderImpl::load_state_dict(const StateDict& state_dict) {
 
 int64_t Qwen3DecoderImpl::init_layer() {
   init_attn_mask();
-  ATBBase::name_ = "qwen3_decoder_layer";
+  ATBBase::name_ = "qwen3_decoder_layer" + std::to_string(layer_id_);
   model_name_ = "qwen3";
   CHECK_OPERATION_STATUS_RETURN(init_node(prefill_node_, prefill_param_));
   CHECK_OPERATION_STATUS_RETURN(init_node(decode_node_, decode_param_));
@@ -571,7 +574,8 @@ void Qwen3DecoderImpl::build_node_variant_pack(atb_speed::Model::Node& node,
   node.variantPack.outTensors.at(0) = internal_tensors_;
 }
 
-Qwen3Decoder::Qwen3Decoder(const ModelContext& context)
-    : ModuleHolder(create_qwen3_decode_layer(context)) {}
+Qwen3Decoder::Qwen3Decoder(const ModelContext& context,
+                          const int32_t layer_id)
+    : ModuleHolder(create_qwen3_decode_layer(context,layer_id)) {}
 
 }  // namespace xllm::hf

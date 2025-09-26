@@ -97,10 +97,13 @@ static const std::unordered_map<std::string, int> WEIGHT_MAPPING = {
     {"input_layernorm.weight", IN_INPUT_NORM_WEIGHT},
 
     {"self_attn.q_proj.weight", IN_QKV_WEIGHT_0},
+    {"self_attn.q_proj.bias", IN_QKV_BIAS_0},
 
     {"self_attn.k_proj.weight", IN_QKV_WEIGHT_1},
+    {"self_attn.k_proj.bias", IN_QKV_BIAS_1},
 
     {"self_attn.v_proj.weight", IN_QKV_WEIGHT_2},
+    {"self_attn.v_proj.bias", IN_QKV_WEIGHT_2},
 
     {"self_attn.o_proj.weight", IN_ATTENTION_OUT_WEIGHT},
 
@@ -127,19 +130,19 @@ static const std::unordered_map<std::string, int> WEIGHT_MAPPING_W8A8 = {
     {"input_layernorm.bias", IN_INPUT_NORM_NEW_BIAS},
 
     {"self_attn.q_proj.weight", IN_QKV_WEIGHT_0},
-    {"self_attn.q_proj.quant_bias", IN_QKV_BIAS_0},
+    {"self_attn.q_proj.bias", IN_QKV_BIAS_0},
     {"self_attn.q_proj.deq_scale", IN_QKV_DESCALE_0},
     {"self_attn.q_proj.weight_offset", IN_QKV_OFFSET_0},
     {"self_attn.q_proj.weight_scale", IN_QKV_SCALE_0},
 
     {"self_attn.k_proj.weight", IN_QKV_WEIGHT_1},
-    {"self_attn.k_proj.quant_bias", IN_QKV_BIAS_1},
+    {"self_attn.k_proj.bias", IN_QKV_BIAS_1},
     {"self_attn.k_proj.deq_scale", IN_QKV_DESCALE_1},
     {"self_attn.k_proj.weight_offset", IN_QKV_OFFSET_1},
     {"self_attn.k_proj.weight_scale", IN_QKV_SCALE_1},
 
     {"self_attn.v_proj.weight", IN_QKV_WEIGHT_2},
-    {"self_attn.v_proj.quant_bias", IN_QKV_BIAS_2},
+    {"self_attn.v_proj.bias", IN_QKV_BIAS_2},
     {"self_attn.v_proj.deq_scale", IN_QKV_DESCALE_2},
     {"self_attn.v_proj.weight_offset", IN_QKV_OFFSET_2},
     {"self_attn.v_proj.weight_scale", IN_QKV_SCALE_2},
@@ -182,8 +185,11 @@ static const std::unordered_map<std::string, std::vector<int>>
 
 static const std::map<int, int> WEIGHT_SHARD = {
     {IN_QKV_WEIGHT_0, 0},
+    {IN_QKV_BIAS_0, 0},
     {IN_QKV_WEIGHT_1, 0},
+    {IN_QKV_BIAS_1, 0},
     {IN_QKV_WEIGHT_2, 0},
+    {IN_QKV_BIAS_2, 0},
     {IN_ATTENTION_OUT_WEIGHT, 1},
     {IN_MLP_GATEUP_WEIGHT_EXPERT, 0},
     {IN_MLP_DOWN_WEIGHT_EXPERT, 1},
@@ -652,6 +658,17 @@ void Qwen3MoeDecoderImpl::merge_loaded_weights() {
   at_weight_tensors_[IN_QKV_WEIGHT_2] =
       torch::zeros({1}, torch::kFloat16).to(device_);
 
+  at_weight_tensors_[IN_QKV_BIAS_0] =
+    torch::cat({at_weight_tensors_[IN_QKV_BIAS_0],
+                at_weight_tensors_[IN_QKV_BIAS_1],
+                at_weight_tensors_[IN_QKV_BIAS_2]},
+                0)
+        .contiguous();
+  at_weight_tensors_[IN_QKV_BIAS_1] =
+      torch::zeros({1}, torch::kFloat16).to(device_);
+  at_weight_tensors_[IN_QKV_BIAS_2] =
+      torch::zeros({1}, torch::kFloat16).to(device_);
+
   if (quantize_type_.compare("w8a8_dynamic") == 0) {
     at_weight_tensors_[IN_QKV_BIAS_0] =
         torch::zeros({1}, torch::kFloat16).to(device_);
@@ -724,14 +741,6 @@ void Qwen3MoeDecoderImpl::convert_descaled_weights_to_float() {
 }
 
 void Qwen3MoeDecoderImpl::merge_experts_weights() {
-  if (experts_weights_.count("gate_proj.weight") > 0) {
-    auto& gate_weight = experts_weights_["gate_proj.weight"];
-  }
-
-  if (experts_weights_.count("up_proj.weight") > 0) {
-    auto& up_weight = experts_weights_["up_proj.weight"];
-  }
-
   try {
     torch::Tensor mlp_gateup_weight;
     if (quantize_type_.compare("w8a8_dynamic") == 0) {

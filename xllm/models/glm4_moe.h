@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "core/framework/model/npu_dp_ep_padding.h"
 #include "core/framework/model_context.h"
-#include "core/layers/npu/qwen3_moe_decoder_layer.h"
+#include "core/layers/npu/glm4_moe_decoder_layer.h"
 #include "llm_model_base.h"
 
 namespace xllm::hf {
@@ -27,12 +27,12 @@ namespace xllm::hf {
 using torch::indexing::None;
 using ISlice = torch::indexing::Slice;
 
-class Qwen3MoeDecoderLayerImpl : public torch::nn::Module {
+class Glm4MoeDecoderLayerImpl : public torch::nn::Module {
  public:
-  Qwen3MoeDecoderLayerImpl(const ModelContext& context, const int32_t i) {
+  Glm4MoeDecoderLayerImpl(const ModelContext& context, const int32_t i) {
     // register submodules
     decoder_layer_ =
-        register_module("decoder_layer", Qwen3MoeDecoder(context, i));
+        register_module("decoder_layer", Glm4MoeDecoder(context, i));
   }
 
   torch::Tensor forward(torch::Tensor x,
@@ -66,21 +66,13 @@ class Qwen3MoeDecoderLayerImpl : public torch::nn::Module {
   void merge_loaded_weights() { decoder_layer_->merge_loaded_weights(); }
 
  private:
-  Qwen3MoeDecoder decoder_layer_{nullptr};
+  Glm4MoeDecoder decoder_layer_{nullptr};
 };
-TORCH_MODULE(Qwen3MoeDecoderLayer);
+TORCH_MODULE(Glm4MoeDecoderLayer);
 
-torch::Tensor get_qwen3_moe_rotary_embedding(
-    int64_t dim,
-    int64_t seq_len,
-    double rope_theta,
-    const torch::TensorOptions& options) {
-  return get_concat_rotary_embedding(dim, seq_len, rope_theta, options);
-}
-
-class Qwen3MoeModelImpl : public torch::nn::Module {
+class Glm4MoeModelImpl : public torch::nn::Module {
  public:
-  Qwen3MoeModelImpl(const ModelContext& context)
+  Glm4MoeModelImpl(const ModelContext& context)
       : device_(context.get_tensor_options().device()) {
     auto options = context.get_tensor_options();
     auto model_args = context.get_model_args();
@@ -96,7 +88,7 @@ class Qwen3MoeModelImpl : public torch::nn::Module {
 
     atb_pos_emb_ = AtbRotaryEmbedding(context);
     cos_sin_ =
-       get_concat_rotary_embedding(128,
+       get_concat_rotary_embedding(64,
                                           model_args.max_position_embeddings(),
                                           model_args.rope_theta(),
                                           options);
@@ -108,7 +100,7 @@ class Qwen3MoeModelImpl : public torch::nn::Module {
                                    /*mask_value=*/mask_value);
 
     for (int32_t i = 0; i < model_args.n_layers(); ++i) {
-      auto block = Qwen3MoeDecoderLayer(context, i);
+      auto block = Glm4MoeDecoderLayer(context, i);
       layers_.push_back(block);
       blocks_->push_back(block);
     }
@@ -149,7 +141,8 @@ class Qwen3MoeModelImpl : public torch::nn::Module {
     auto target_cos_sin_chunks = target_cos_sin.chunk(/*chunks=*/2, /*dim=*/-1);
     auto cos_pos = target_cos_sin_chunks[0].contiguous();
     auto sin_pos = target_cos_sin_chunks[1].contiguous();
-
+    cos_pos = cos_pos.view(at::IntArrayRef{-1, 2, cos_pos.size(-1) / 2});
+    sin_pos = sin_pos.view(at::IntArrayRef{-1, 2, sin_pos.size(-1) / 2});
     torch::Tensor attn_mask;
     if (num_speculative_tokens_ == 0 || input_params.global_empty_kv_cache) {
       attn_mask = attn_mask_.get_attn_mask(128, dtype_, device_);
@@ -216,7 +209,7 @@ class Qwen3MoeModelImpl : public torch::nn::Module {
 
  private:
   torch::nn::ModuleList blocks_{nullptr};
-  std::vector<Qwen3MoeDecoderLayer> layers_;
+  std::vector<Glm4MoeDecoderLayer> layers_;
   int32_t max_seq_len_ = 0;
   int32_t dp_rank_;
   int32_t rank_;
@@ -233,54 +226,52 @@ class Qwen3MoeModelImpl : public torch::nn::Module {
   torch::Tensor cos_sin_;
   AtbRotaryEmbedding atb_pos_emb_{nullptr};
 };
-TORCH_MODULE(Qwen3MoeModel);
+TORCH_MODULE(Glm4MoeModel);
 
-class Qwen3MoeForCausalLMImpl : public LlmForCausalLMImplBase<Qwen3Model> {
+class Glm4MoeForCausalLMImpl : public LlmForCausalLMImplBase<Glm4MoeModel> {
  public:
-  Qwen3MoeForCausalLMImpl(const ModelContext& context)
-      : LlmForCausalLMImplBase<Qwen3Model>(context) {}
+  Glm4MoeForCausalLMImpl(const ModelContext& context)
+      : LlmForCausalLMImplBase<Glm4MoeModel>(context) {}
 };
-TORCH_MODULE(Qwen3MoeForCausalLM);
+TORCH_MODULE(Glm4MoeForCausalLM);
 
 
 // register the causal model
-REGISTER_CAUSAL_MODEL(qwen3_moe, Qwen3MoeForCausalLM);
+REGISTER_CAUSAL_MODEL(glm4_moe, Glm4MoeForCausalLM);
 
 // register the model args
 // example config:
-// https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/config.json
-// https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/main/config.json
-REGISTER_MODEL_ARGS(qwen3_moe, [&] {
-  LOAD_ARG_OR(model_type, "model_type", "qwen3_moe");
+// https://huggingface.co/zai-org/GLM-4.5-Air/blob/main/config.json
+REGISTER_MODEL_ARGS(glm4_moe, [&] {
+  LOAD_ARG_OR(model_type, "model_type", "glm4_moe");
   LOAD_ARG_OR(dtype, "torch_dtype", "");
   LOAD_ARG_OR(attention_bias, "attention_bias", false);
   LOAD_ARG_OR(attention_dropout, "attention_dropout", 0.0f);
-  LOAD_ARG_OR(bos_token_id, "bos_token_id", 151643);
   LOAD_ARG_OR(decoder_sparse_step, "decoder_sparse_step", 1);
-  LOAD_ARG_OR(eos_token_id, "eos_token_id", 151645);
+  LOAD_ARG_OR(eos_token_id_vec, "eos_token_id", std::vector<int>{151329});
   LOAD_ARG_OR(head_dim, "head_dim", 128);
   LOAD_ARG_OR(hidden_act, "hidden_act", "silu");
   LOAD_ARG_OR(hidden_size, "hidden_size", 2048);
   LOAD_ARG_OR(initializer_range, "initializer_range", 0.02f);
   LOAD_ARG_OR(intermediate_size, "intermediate_size", 6144);
   LOAD_ARG_OR(max_position_embeddings, "max_position_embeddings", 40960);
-  LOAD_ARG_OR(max_window_layers, "max_window_layers", 48);
-  LOAD_ARG_OR(moe_intermediate_size, "moe_intermediate_size", 768);
+  LOAD_ARG_OR(moe_intermediate_size, "moe_intermediate_size", 1536);
+  LOAD_ARG_OR(routed_scaling_factor, "routed_scaling_factor", 2.5);
   LOAD_ARG_OR(norm_topk_prob, "norm_topk_prob", true);
-  LOAD_ARG_OR(n_heads, "num_attention_heads", 32);
-  LOAD_ARG_OR(num_experts, "num_experts", 128);
+  LOAD_ARG_OR(n_shared_experts, "n_shared_experts", 1);
+  LOAD_ARG_OR(n_heads, "num_attention_heads", 96);
+  LOAD_ARG_OR(num_experts, "n_routed_experts", 160);
+  LOAD_ARG_OR(n_group, "n_group", 1);
+  LOAD_ARG_OR(topk_group, "topk_group", 1);
   LOAD_ARG_OR(num_experts_per_tok, "num_experts_per_tok", 8);
   LOAD_ARG_OR(n_layers, "num_hidden_layers", 48);
   LOAD_ARG_OR(n_kv_heads, "num_key_value_heads", 4);
-  LOAD_ARG_OR(output_router_logits, "output_router_logits", false);
   LOAD_ARG_OR(rms_norm_eps, "rms_norm_eps", 1e-6);
   LOAD_ARG_OR(rope_theta, "rope_theta", 1000000.0f);
-  LOAD_ARG_OR(router_aux_loss_coef, "router_aux_loss_coef", 0.001f);
-  LOAD_ARG_OR(use_sliding_window, "use_sliding_window", false);
-  LOAD_ARG_OR(sliding_window, "sliding_window", 4096);
   LOAD_ARG_OR(tie_word_embeddings, "tie_word_embeddings", false);
-  LOAD_ARG_OR(vocab_size, "vocab_size", 151936);
-
-  SET_ARG(stop_token_ids, std::unordered_set<int32_t>({args->eos_token_id()}));
+  LOAD_ARG_OR(vocab_size, "vocab_size", 151552);
+  LOAD_ARG_OR(first_k_dense_replace, "first_k_dense_replace", 1);
+  
+  SET_ARG(stop_token_ids, std::unordered_set<int32_t>(args->eos_token_id_vec().begin(),args->eos_token_id_vec().end()));
 });
 }  // namespace xllm::hf
