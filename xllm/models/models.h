@@ -20,15 +20,16 @@ limitations under the License.
 #include "deepseek_v2_mtp.h"     // IWYU pragma: keep
 #include "deepseek_v3.h"         // IWYU pragma: keep
 #include "flux/pipeline_flux.h"  // IWYU pragma: keep
+#include "glm4_moe.h"            // IWYU pragma: keep
+#include "glm4_moe_mtp.h"        // IWYU pragma: keep
 #include "kimi_k2.h"             // IWYU pragma: keep
 #include "llama.h"               // IWYU pragma: keep
 #include "llama3.h"              // IWYU pragma: keep
+#include "llm_model_base.h"      // IWYU pragma: keep
 #include "minicpmv.h"            // IWYU pragma: keep
 #include "qwen2.h"               // IWYU pragma: keep
 #include "qwen2_5_vl.h"          // IWYU pragma: keep
 #include "qwen3.h"               // IWYU pragma: keep
 #include "qwen3_embedding.h"     // IWYU pragma: keep
 #include "qwen3_moe.h"           // IWYU pragma: keep
-#include "llm_model_base.h"      // IWYU pragma: keep
-#include "glm4_moe.h"            // IWYU pragma: keep
 #endif

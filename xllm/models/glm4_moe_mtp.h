@@ -19,64 +19,20 @@ limitations under the License.
 
 #include "core/framework/model/npu_dp_ep_padding.h"
 #include "core/framework/model_context.h"
+#include "core/layers/npu/atb_parallel_linear.h"
 #include "core/layers/npu/glm4_moe_decoder_layer.h"
+#include "glm4_moe.h"
 #include "llm_model_base.h"
 
 namespace xllm::hf {
 
-using torch::indexing::None;
-using ISlice = torch::indexing::Slice;
-
-class Glm4MoeDecoderLayerImpl : public torch::nn::Module {
+class Glm4MoeMtpModelImpl : public torch::nn::Module {
  public:
-  Glm4MoeDecoderLayerImpl(const ModelContext& context, const int32_t i) {
-    // register submodules
-    decoder_layer_ =
-        register_module("decoder_layer", Glm4MoeDecoder(context, i));
-  }
-
-  torch::Tensor forward(torch::Tensor x,
-                        torch::Tensor cos_pos,
-                        torch::Tensor sin_pos,
-                        torch::Tensor attn_mask,
-                        KVCache& kv_cache,
-                        const ModelInputParams& input_params,
-                        torch::Tensor expert_array,
-                        aclrtEvent* event = nullptr,
-                        std::atomic<bool>* event_flag = nullptr) {
-    return decoder_layer_(x,
-                          cos_pos,
-                          sin_pos,
-                          attn_mask,
-                          kv_cache,
-                          input_params,
-                          expert_array,
-                          event,
-                          event_flag);
-  }
-
-  void load_state_dict(const StateDict& state_dict) {
-    decoder_layer_->load_state_dict(state_dict);
-  }
-
-  void verify_loaded_weights(const std::string& prefix) const {
-    decoder_layer_->verify_loaded_weights(prefix);
-  }
-
-  void merge_loaded_weights() { decoder_layer_->merge_loaded_weights(); }
-
- private:
-  Glm4MoeDecoder decoder_layer_{nullptr};
-};
-TORCH_MODULE(Glm4MoeDecoderLayer);
-
-class Glm4MoeModelImpl : public torch::nn::Module {
- public:
-  Glm4MoeModelImpl(const ModelContext& context)
+  Glm4MoeMtpModelImpl(const ModelContext& context)
       : device_(context.get_tensor_options().device()) {
-    auto options = context.get_tensor_options();
     auto model_args = context.get_model_args();
     auto parallel_args = context.get_parallel_args();
+    auto options = context.get_tensor_options();
 
     blocks_ = register_module("layers", torch::nn::ModuleList());
     layers_.reserve(model_args.n_layers());
@@ -104,7 +60,11 @@ class Glm4MoeModelImpl : public torch::nn::Module {
       blocks_->push_back(block);
     }
 
-    norm_ = register_module("norm", RmsNorm(context));
+    eh_proj_ = register_module("eh_proj", AtbColumnParallelLinear(context));
+    enorm_ = register_module("enorm", RmsNorm(context));
+    hnorm_ = register_module("hnorm", RmsNorm(context));
+    final_norm_ = register_module("final_norm", RmsNorm(context));
+
     dp_size_ = parallel_args.dp_size();
     std::vector<int64_t> indices;
     dp_local_tp_size_ = parallel_args.world_size() / dp_size_;
@@ -130,18 +90,28 @@ class Glm4MoeModelImpl : public torch::nn::Module {
       }
     }
 
-    auto h = embed_tokens_(tokens, 0);
-    int64_t input_length = tokens.size(0);
-    torch::Tensor expert_array = torch::arange(
-        0,
-        input_length * num_experts_per_tok_,
-        torch::TensorOptions().dtype(torch::kInt32).device(tokens.device()));
-    auto target_cos_sin = atb_pos_emb_(cos_sin_, positions, 0);
-    auto target_cos_sin_chunks = target_cos_sin.chunk(/*chunks=*/2, /*dim=*/-1);
-    auto cos_pos = target_cos_sin_chunks[0].contiguous();
-    auto sin_pos = target_cos_sin_chunks[1].contiguous();
+    torch::Tensor h = embed_tokens_(tokens, 0);
+    torch::Tensor enorm = enorm_(h, 0);
+    const auto& res = input_params.mm_data.get<torch::Tensor>("embedding");
+    if (res) {
+      h = res.value();
+    } else {
+      LOG(WARNING) << "hnorm use embedding from tokens.";
+    }
+
+    torch::Tensor hnorm = hnorm_(h, 0);
+    CHECK_EQ(enorm.dim(), hnorm.dim());
+    CHECK_EQ(enorm.size(0), hnorm.size(0));
+    h = torch::cat({enorm, hnorm}, /*dim=*/-1);
+    h = eh_proj_(h, 0);
+
+    auto cos_sin = atb_pos_emb_(cos_sin_, positions, 0);
+    auto cos_sin_chunks = cos_sin.chunk(/*chunks=*/2, /*dim=*/-1);
+    auto cos_pos = cos_sin_chunks[0].contiguous();
+    auto sin_pos = cos_sin_chunks[1].contiguous();
     cos_pos = cos_pos.view(at::IntArrayRef{-1, 2, cos_pos.size(-1) / 2});
     sin_pos = sin_pos.view(at::IntArrayRef{-1, 2, sin_pos.size(-1) / 2});
+
     torch::Tensor attn_mask;
     torch::Tensor max_of_seq = torch::max(input_params.kv_seq_lens);
     max_seq_len_ = FLAGS_enable_chunked_prefill
@@ -155,6 +125,12 @@ class Glm4MoeModelImpl : public torch::nn::Module {
     //   attn_mask = attn_mask_.gen_free_mask(
     //       num_speculative_tokens_ + 1, dtype_, device_);
     // }
+
+    int64_t input_length = tokens.size(0);
+    torch::Tensor expert_array = torch::arange(
+        0,
+        input_length * num_experts_per_tok_,
+        torch::TensorOptions().dtype(torch::kInt32).device(tokens.device()));
 
     for (size_t i = 0; i < layers_.size(); i++) {
       aclrtEvent* event = nullptr;
@@ -174,36 +150,45 @@ class Glm4MoeModelImpl : public torch::nn::Module {
             event,
             event_flag);
     }
-    return norm_(h, 0);
+    return final_norm_(h, 0);
   }
 
   // load the weight from the checkpoint
   void load_state_dict(const StateDict& state_dict) {
-    embed_tokens_->load_state_dict(
-        state_dict.get_dict_with_prefix("embed_tokens."));
+    // embed_tokens_->load_state_dict(state_dict.get_dict_with_prefix("embed_tokens."));
     // call each layer's load_state_dict function
     for (int i = 0; i < layers_.size(); i++) {
       layers_[i]->load_state_dict(
           state_dict.get_dict_with_prefix("layers." + std::to_string(i) + "."));
     }
-    norm_->load_state_dict(state_dict.get_dict_with_prefix("norm."));
+    eh_proj_->load_state_dict(state_dict.get_dict_with_prefix("eh_proj."));
+    enorm_->load_state_dict(state_dict.get_dict_with_prefix("enorm."));
+    hnorm_->load_state_dict(state_dict.get_dict_with_prefix("hnorm."));
+    final_norm_->load_state_dict(
+        state_dict.get_dict_with_prefix("shared_head.norm."));
   }
 
   void verify_loaded_weights(const std::string& prefix) const {
-    embed_tokens_->verify_loaded_weights(prefix + "embed_tokens.");
+    // embed_tokens_->verify_loaded_weights(prefix + "embed_tokens.");
     for (int i = 0; i < layers_.size(); i++) {
       layers_[i]->verify_loaded_weights(prefix + "layers." + std::to_string(i) +
                                         ".");
     }
-    norm_->verify_loaded_weights(prefix + "norm.");
+    eh_proj_->verify_loaded_weights(prefix + "eh_proj.");
+    enorm_->verify_loaded_weights(prefix + "enorm.");
+    hnorm_->verify_loaded_weights(prefix + "hnorm.");
+    final_norm_->verify_loaded_weights(prefix + "shared_head.norm.");
   }
 
   void merge_loaded_weights() {
-    embed_tokens_->merge_loaded_weights();
+    // embed_tokens_->merge_loaded_weights();
     for (int i = 0; i < layers_.size(); i++) {
       layers_[i]->merge_loaded_weights();
     }
-    norm_->merge_loaded_weights();
+    eh_proj_->merge_loaded_weights();
+    enorm_->merge_loaded_weights();
+    hnorm_->merge_loaded_weights();
+    final_norm_->merge_loaded_weights();
   }
 
   AtbWordEmbedding get_word_embedding() { return embed_tokens_; }
@@ -222,32 +207,89 @@ class Glm4MoeModelImpl : public torch::nn::Module {
   int32_t dp_local_tp_size_;
   nlohmann::json mapping_data_;
   int32_t num_experts_per_tok_;
-  int32_t num_speculative_tokens_ = 0;
   at::Device device_;
   torch::Dtype dtype_;
   AtbWordEmbedding embed_tokens_{nullptr};
   AttentionMaskImpl attn_mask_;
-  RmsNorm norm_{nullptr};
   torch::Tensor cos_sin_;
   AtbRotaryEmbedding atb_pos_emb_{nullptr};
+  AtbColumnParallelLinear eh_proj_{nullptr};
+  RmsNorm enorm_{nullptr};
+  RmsNorm hnorm_{nullptr};
+  RmsNorm final_norm_{nullptr};
 };
-TORCH_MODULE(Glm4MoeModel);
+TORCH_MODULE(Glm4MoeMtpModel);
 
-class Glm4MoeForCausalLMImpl : public LlmForCausalLMImplBase<Glm4MoeModel> {
+class Glm4MoeMtpForCausalLMImpl : public torch::nn::Module {
  public:
-  Glm4MoeForCausalLMImpl(const ModelContext& context)
-      : LlmForCausalLMImplBase<Glm4MoeModel>(context) {}
+  Glm4MoeMtpForCausalLMImpl(const ModelContext& context) {
+    model_ = register_module("model", Glm4MoeMtpModel(context));
+    // lm_head_ = register_module(
+    //     "lm_head", LlmHead(context));
+  }
+
+  // tokens: [num_tokens]
+  // positions: [num_tokens] token pos in the sequence
+  // returns: [num_tokens, hidden_size]
+  torch::Tensor forward(const torch::Tensor& tokens,
+                        const torch::Tensor& positions,
+                        std::vector<KVCache>& kv_caches,
+                        const ModelInputParams& input_params) {
+    return model_(tokens, positions, kv_caches, input_params);
+  }
+
+  // hidden_states: [num_tokens, hidden_size]
+  // seleted_idxes: [num_tokens]
+  // returns: [num_tokens, vocab_size]
+  torch::Tensor logits(const torch::Tensor& hidden_states,
+                       const torch::Tensor& seleted_idxes) {
+    // select tokens if provided
+    return lm_head_(hidden_states, seleted_idxes, 0);
+  }
+
+  // load model
+  void load_model(std::unique_ptr<ModelLoader> loader) {
+    for (const auto& state_dict : loader->get_state_dicts()) {
+      model_->load_state_dict(state_dict->get_dict_with_prefix("model."));
+      // lm_head_->load_state_dict(state_dict.get_dict_with_prefix("model.shared_head.head."));
+    }
+
+    // verify
+    model_->verify_loaded_weights("model.");
+    // lm_head_->verify_loaded_weights("model.shared_head.head.");
+
+    model_->merge_loaded_weights();
+    // lm_head_->merge_loaded_weights();
+  }
+
+  void prepare_expert_weight(int32_t layer_id,
+                             const std::vector<int32_t>& expert_ids) {
+    return;
+  }
+  void update_expert_weight(int32_t layer_id) { return; }
+  LlmHead get_lm_head() { return lm_head_; }
+
+  void set_lm_head(LlmHead& head) { lm_head_ = head; }
+
+  AtbWordEmbedding get_word_embedding() { return model_->get_word_embedding(); }
+
+  void set_word_embedding(AtbWordEmbedding& word_embedding) {
+    model_->set_word_embedding(word_embedding);
+  }
+
+ private:
+  Glm4MoeMtpModel model_{nullptr};
+  LlmHead lm_head_{nullptr};
 };
-TORCH_MODULE(Glm4MoeForCausalLM);
+TORCH_MODULE(Glm4MoeMtpForCausalLM);
 
 // register the causal model
-REGISTER_CAUSAL_MODEL(glm4_moe, Glm4MoeForCausalLM);
+REGISTER_CAUSAL_MODEL(glm4_moe_mtp, Glm4MoeMtpForCausalLM);
 
-// register the model args
 // example config:
 // https://huggingface.co/zai-org/GLM-4.5-Air/blob/main/config.json
-REGISTER_MODEL_ARGS(glm4_moe, [&] {
-  LOAD_ARG_OR(model_type, "model_type", "glm4_moe");
+REGISTER_MODEL_ARGS(glm4_moe_mtp, [&] {
+  LOAD_ARG_OR(model_type, "model_type", "glm4_moe_mtp");
   LOAD_ARG_OR(dtype, "torch_dtype", "");
   LOAD_ARG_OR(attention_bias, "attention_bias", false);
   LOAD_ARG_OR(attention_dropout, "attention_dropout", 0.0f);
