@@ -112,7 +112,7 @@ class SpeculativeWorkerImpl : public WorkerImpl {
                                        dst_blocks);
   };
 
- private:
+ protected:
   std::optional<ForwardOutput> step_prefill(const ForwardInput& inputs);
 
   std::optional<ForwardOutput> step_decode(const ForwardInput& inputs);
@@ -143,7 +143,7 @@ class SpeculativeWorkerImpl : public WorkerImpl {
                               const int32_t num_val_tokens,
                               const int32_t total_num_val_tokens);
 
- private:
+ protected:
   int32_t embedding_size_ = 0;
 
   std::unique_ptr<LLMWorkerImpl> impl_;

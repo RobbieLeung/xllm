@@ -185,6 +185,7 @@ message ForwardInput {
   repeated CacheBlockInfo copy_out_blocks = 28;
   repeated CacheBlockInfo copy_in_blocks = 29;
   repeated CacheBlockInfo swap_blocks = 30;
+  repeated int32 extra_token_ids = 31;
 }
 
 message Embeddings {

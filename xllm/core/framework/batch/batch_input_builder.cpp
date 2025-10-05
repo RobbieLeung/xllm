@@ -182,6 +182,14 @@ void BatchInputBuilder::extract_tokens_and_positions(Sequence* sequence,
     handle_sampling_parameters(
         sequence, j, seq_len, adjusted_token_to_count_map);
   }
+
+  // Add extra token id
+  if (n_tokens == seq_len) {
+    // last chunk, add -1 as extra token id
+    state_.extra_token_ids.push_back(-1);
+  } else {
+    state_.extra_token_ids.push_back(token_ids[seq_len]);
+  }
 }
 
 void BatchInputBuilder::handle_sampling_parameters(
@@ -406,6 +414,7 @@ RawForwardInput BatchInputBuilder::state_to_raw_forward_input() {
   raw_forward_input.prefill_seq_len = state_.prefill_seq_len;
 
   raw_forward_input.embedding_ids = std::move(state_.embedding_ids);
+  raw_forward_input.extra_token_ids = std::move(state_.extra_token_ids);
 
   if (mm_data_vec_.size() != 0) {
     MMData mm_data = MMData::batch(mm_data_vec_);

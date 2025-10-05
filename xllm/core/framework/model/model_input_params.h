@@ -151,6 +151,10 @@ struct ModelInputParams {
 
   DpEpPaddingData dp_ep_padding_data;
   torch::Tensor expert_load_data;
+
+  // chunked prefill case of speculative decoding
+  // extra token ids for each sequence, and -1 for last chunk
+  std::vector<int32_t> extra_token_ids;
 };
 
 }  // namespace xllm
