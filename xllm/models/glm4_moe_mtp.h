@@ -39,7 +39,7 @@ class Glm4MoeMtpModelImpl : public torch::nn::Module {
     // register submodules
     device_ = options.device();
     dtype_ = options.dtype().toScalarType();
-    num_speculative_tokens_ = model_args.num_speculative_tokens();
+    // num_speculative_tokens_ = model_args.num_speculative_tokens();
     embed_tokens_ = register_module("embed_tokens", AtbWordEmbedding(context));
 
     atb_pos_emb_ = AtbRotaryEmbedding(context);

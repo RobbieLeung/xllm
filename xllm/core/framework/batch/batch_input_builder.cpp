@@ -144,7 +144,7 @@ void BatchInputBuilder::process_single_sequence(int32_t seq_index) {
   if (sequence->is_prefill_stage()) {
     state_.prefill_seq_len++;
   }
-  state_.embedding_ids.push_back(sequence->get_embedding_id());
+  // state_.embedding_ids.push_back(sequence->get_embedding_id());
 }
 
 void BatchInputBuilder::extract_tokens_and_positions(Sequence* sequence,
@@ -185,8 +185,10 @@ void BatchInputBuilder::extract_tokens_and_positions(Sequence* sequence,
 
   // Add extra token id
   if (n_tokens == seq_len) {
-    // last chunk, add -1 as extra token id
+    // last chunk of prefill and decode
+    // add -1 as extra token id
     state_.extra_token_ids.push_back(-1);
+    state_.embedding_ids.push_back(sequence->get_embedding_id());
   } else {
     state_.extra_token_ids.push_back(token_ids[seq_len]);
   }

@@ -81,6 +81,8 @@ struct ModelInputParams {
     params.copy_out_blocks = std::move(copy_out_blocks);
     params.copy_in_blocks = std::move(copy_in_blocks);
     params.swap_blocks = std::move(swap_blocks);
+
+    params.extra_token_ids = std::move(extra_token_ids);
     return params;
   }
 

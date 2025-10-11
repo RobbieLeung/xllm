@@ -162,23 +162,25 @@ std::optional<ForwardOutput> LLMWorkerImpl::step(const ForwardInput& inputs) {
     sample_output = sampler_->forward(logits, sampling_params);
     output.logits = logits;
 
-    if (options_.enable_speculative_decode()) {
-      if (params.empty_kv_cache) {
-        sample_output.embeddings = hidden_states;
-      } else {
-        auto sample_idxes = sampling_params.selected_token_idxes.index_select(
-            /*dim=*/0, sampling_params.sample_idxes);
-        auto embeddings = hidden_states.index_select(/*dim=*/0, sample_idxes);
-        sample_output.embeddings = embeddings;
-      }
-    }
-
     // set sample output to output
     output.sample_output = sample_output;
     // carry over the sampling params
     output.do_sample = sampling_params.do_sample;
     output.logprobs = sampling_params.logprobs;
     output.max_top_logprobs = sampling_params.max_top_logprobs;
+  }
+
+  // generate embeddings for speculative decode
+  if (options_.enable_speculative_decode() && !is_spec_draft_) {
+    if (params.q_seq_lens_vec[0] > 1) {
+      output.sample_output.embeddings = hidden_states;
+    } else if (sampling_params.selected_token_idxes.defined()) {
+      // auto sample_idxes = sampling_params.selected_token_idxes.index_select(
+      //     /*dim=*/0, sampling_params.sample_idxes);
+      auto embeddings =
+          hidden_states.index_select(/*dim=*/0, sampling_params.sample_idxes);
+      output.sample_output.embeddings = embeddings;
+    }
   }
 
 #if defined(USE_NPU)

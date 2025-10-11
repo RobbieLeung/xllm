@@ -314,7 +314,8 @@ std::shared_ptr<Request> LLMMaster::generate_request(
         std::min(max_context_len, options_.max_tokens_per_batch());
   }
   if (local_prompt_tokens.size() >= max_context_len) {
-    LOG(ERROR) << "Prompt is too long: " << local_prompt_tokens.size();
+    LOG(ERROR) << "Prompt is too long: " << local_prompt_tokens.size()
+               << " max_context_len: " << max_context_len;
     CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT, "Prompt is too long");
     return nullptr;
   }

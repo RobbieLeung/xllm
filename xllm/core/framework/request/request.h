@@ -100,6 +100,8 @@ class Request {
     return state_.sampling_param.beam_width > 1;
   }
 
+  bool is_prefill_stage() const { return sequences_group_->is_prefill_stage(); }
+
  private:
   // request create time
   absl::Time created_time_;

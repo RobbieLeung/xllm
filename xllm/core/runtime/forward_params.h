@@ -155,6 +155,9 @@ struct RawForwardInput {
   std::vector<CacheBlockInfo> copy_out_blocks;
   std::vector<CacheBlockInfo> copy_in_blocks;
   std::vector<CacheBlockInfo> swap_blocks;
+  // chunked prefill case of speculative decoding
+  // extra token ids for each sequence, and -1 for last chunk
+  std::vector<int32_t> extra_token_ids;
 };
 
 struct RawSampleOutput {

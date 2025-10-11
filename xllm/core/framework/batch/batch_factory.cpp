@@ -90,7 +90,6 @@ std::vector<Batch> BatchFactory::create_batches(
       }
     }
   }
-
   COUNTER_ADD(num_processing_tokens_total_prompt, num_prompt_tokens);
   COUNTER_ADD(num_processing_tokens_total_generated, num_generated_tokens);
 
