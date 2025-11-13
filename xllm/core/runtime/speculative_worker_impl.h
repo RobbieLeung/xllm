@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "common/macros.h"
 #include "framework/kv_cache/embedding_allocator.h"
+#include "framework/kv_cache/embedding_allocator2.h"
 #if defined(USE_NPU)
 #include "framework/kv_cache/spec_kv_cache_transfer.h"
 #endif
@@ -131,6 +132,10 @@ class SpeculativeWorkerImpl : public WorkerImpl {
                             const int64_t offset,
                             const torch::Device device);
 
+  void prepare_first_draft_inputs(const BatchedForwardInputs& inputs,
+                                  BatchedForwardInputs& draft_inputs,
+                                  const torch::Device device);
+
   // prepare inputs for target model at Decode phase.
   void prepare_validate_inputs(const BatchedForwardInputs& inputs,
                                BatchedForwardInputs& validate_inputs,
@@ -150,7 +155,7 @@ class SpeculativeWorkerImpl : public WorkerImpl {
   std::unique_ptr<LLMWorkerImpl> impl_;
   std::unique_ptr<LLMWorkerImpl> draft_impl_;
 
-  std::shared_ptr<EmbeddingAllocator> embedding_allocator_;
+  std::shared_ptr<EmbeddingAllocator2> embedding_allocator_;
 #if defined(USE_NPU)
   std::shared_ptr<SpecKVCacheTransfer> kv_cache_transfer_;
 #endif
