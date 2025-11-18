@@ -20,6 +20,7 @@ limitations under the License.
 #include <torch/torch.h>
 
 #include <boost/algorithm/string.hpp>
+#include <future>
 #include <vector>
 
 #include "common/global_flags.h"

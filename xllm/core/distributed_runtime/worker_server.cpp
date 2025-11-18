@@ -21,6 +21,7 @@ limitations under the License.
 #include <folly/futures/Future.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <signal.h>
 #include <torch/torch.h>
 #include <unistd.h>
 

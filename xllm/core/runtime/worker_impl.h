@@ -274,6 +274,8 @@ class WorkerImpl {
   Status status_ = Status::UNINITIALIZED;
 
   torch::Tensor expert_load_data_;
+
+  std::shared_ptr<KVCacheStore> kvcache_store_ = nullptr;
 };
 
 class AlignedTensorCreater {

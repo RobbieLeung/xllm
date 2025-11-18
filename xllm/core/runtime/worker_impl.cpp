@@ -177,6 +177,7 @@ bool WorkerImpl::allocate_host_kv_cache(
 
   if (options_.enable_kvcache_store()) {
     StoreConfig config;
+    config.store_type = "memcache";
     config.localhost_name = options_.store_local_hostname();
     config.protocol = options_.store_protocol();
     config.metadata_server = options_.store_metadata_server();
@@ -184,11 +185,13 @@ bool WorkerImpl::allocate_host_kv_cache(
     config.tp_rank = options_.dp_size() > 1
                          ? options_.node_rank() % options_.dp_size()
                          : options_.node_rank();
+    config.device_idx = device_.index();
     config.total_size = aligned_tensor_creater_->get_total_size();
     config.tensor_data = aligned_tensor_creater_->get_base_ptr();
 
-    if (!KVCacheStore::get_instance().init(config, &host_kv_caches_)) {
-      LOG(ERROR) << "Init KVCacheStore fail!";
+    kvcache_store_ = create_kvcache_store(config, &host_kv_caches_);
+    if (kvcache_store_ == nullptr) {
+      LOG(ERROR) << "Create KVCacheStore fail!";
       return false;
     }
   }
@@ -982,7 +985,7 @@ uint32_t WorkerImpl::offload_to_store(
     return block_transfer_info.size();
   }
 
-  return KVCacheStore::get_instance().batch_put(block_transfer_info);
+  return kvcache_store_->batch_put(block_transfer_info);
 }
 
 uint32_t WorkerImpl::prefetch_from_storage(
@@ -990,7 +993,7 @@ uint32_t WorkerImpl::prefetch_from_storage(
   if (!options_.enable_kvcache_store()) {
     return 0;
   }
-  return KVCacheStore::get_instance().batch_get(block_transfer_info);
+  return kvcache_store_->batch_get(block_transfer_info);
 }
 
 AlignedTensorCreater::AlignedTensorCreater(
