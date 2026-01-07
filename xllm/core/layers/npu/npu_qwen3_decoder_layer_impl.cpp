@@ -65,6 +65,7 @@ void NpuQwen3DecoderLayerImpl::param_from_args(
                               FLAGS_communication_backend};
   param.linearHasBias = {0, 0, 0, 0};
   param.useQKNorm = true;
+  param.skipNorm = args.skip_input_layernorm();
 
   param.numHiddenLayers = args.n_layers();
   param.enableIntraLayerAddNorm = true;

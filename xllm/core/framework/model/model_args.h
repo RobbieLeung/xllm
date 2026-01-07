@@ -344,8 +344,10 @@ struct ModelArgs {
   PROPERTY(int32_t, query_num) = 0;
   PROPERTY(bool, image_embedding_mode) = false;
 
+  // some runtime args
   // number of speculative decoding tokens
   PROPERTY(int64_t, num_speculative_tokens) = 0;
+  PROPERTY(bool, skip_input_layernorm) = false;
 
   // VAE related args
   PROPERTY(int64_t, in_channels) = -1;
