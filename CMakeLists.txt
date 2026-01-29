@@ -343,7 +343,7 @@ if(USE_NPU)
       $ENV{NPU_HOME_PATH}/opp/vendors/xllm/op_api/lib/
       $ENV{XLLM_KERNELS_PATH}/lib/
   )
-  link_libraries(cust_opapi)
+  link_libraries(cust_opapi opapi)
 endif()
 
 if(USE_MLU)

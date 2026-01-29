@@ -219,8 +219,7 @@ bool SpeculativeWorkerImpl::allocate_kv_cache(
     const std::vector<std::vector<int64_t>>& kv_cache_shape) {
   // init embedding cache, using total number of blocks
   if (impl_->get_status() == WorkerImpl::Status::LOADED) {
-    embedding_allocator_ = std::make_shared<EmbeddingAllocator>(
-        kv_cache_shape[0][0], embedding_size_, dtype_);
+    embedding_cache_ = std::make_shared<EmbeddingCache>(kv_cache_shape[0][0]);
   }
 
   if (impl_->get_status() == WorkerImpl::Status::LOADED) {
@@ -249,8 +248,7 @@ bool SpeculativeWorkerImpl::allocate_kv_cache_with_transfer(
     CHECK_EQ(draft_impl_->get_status(), WorkerImpl::Status::LOADED);
     draft_impl_->allocate_kv_cache_with_transfer(kv_cache_transfer_,
                                                  kv_cache_shape);
-    embedding_allocator_ = std::make_shared<EmbeddingAllocator>(
-        kv_cache_shape[0][0], embedding_size_, dtype_);
+    embedding_cache_ = std::make_shared<EmbeddingCache>(kv_cache_shape[0][0]);
   }
   return true;
 }
@@ -332,7 +330,7 @@ std::optional<ForwardOutput> SpeculativeWorkerImpl::step_prefill(
     embeddings = embeddings.index_select(
         /*dim=*/0, input.sampling_params.selected_token_idxes);
     CHECK_EQ(embeddings.size(0), output.sample_output.next_tokens.size(0));
-    embedding_allocator_->write(input.input_params.embedding_ids, embeddings);
+    embedding_cache_->write(input.input_params.embedding_ids, embeddings);
   }
   output.sample_output.embeddings = torch::Tensor();
 
@@ -388,7 +386,7 @@ std::optional<ForwardOutput> SpeculativeWorkerImpl::step_decode(
   ForwardInput draft_input = input;
   // get embedding cache
   torch::Tensor embeddings =
-      embedding_allocator_->read(draft_input.input_params.embedding_ids);
+      embedding_cache_->read(draft_input.input_params.embedding_ids);
   draft_input.input_params.input_embedding = embeddings.to(device_);
 
   // run the draft model to get proposals
@@ -408,7 +406,7 @@ std::optional<ForwardOutput> SpeculativeWorkerImpl::step_decode(
     // update input of next step
     if (i < options_.num_speculative_tokens() - 1) {
       draft_input = next_step_input;
-      auto last_output = draft_outputs.back().sample_output;
+      auto& last_output = draft_outputs.back().sample_output;
       draft_input.token_ids = safe_to(last_output.next_tokens, torch::kInt);
       draft_input.input_params.input_embedding =
           last_output.embeddings.to(device_);
@@ -441,9 +439,10 @@ std::optional<ForwardOutput> SpeculativeWorkerImpl::step_decode(
               timer.elapsed_seconds());
 
   // write the right cache and clear embeddings
-  embedding_allocator_->write_validate(input.input_params.embedding_ids,
-                                       val_output.next_tokens.to(torch::kCPU),
-                                       val_output.embeddings);
+  val_output.next_tokens = val_output.next_tokens.to(torch::kCPU);
+  embedding_cache_->write_validate(input.input_params.embedding_ids,
+                                   val_output.next_tokens,
+                                   val_output.embeddings);
 
   if (!enable_schedule_overlap() && !driver_ && !dp_driver_) {
     return std::nullopt;
