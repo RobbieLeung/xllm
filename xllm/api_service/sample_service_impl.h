@@ -45,6 +45,12 @@ bool build_empty_response(const proto::SampleRequest& request,
                           const std::string& request_id,
                           proto::SampleResponse* response);
 
+bool build_response(const std::string& request_id,
+                    const std::string& model,
+                    uint32_t created_time,
+                    const RequestOutput& req_output,
+                    proto::SampleResponse* response);
+
 }  // namespace sample_service_internal
 
 class SampleServiceImpl final : public APIServiceImpl<SampleCall> {

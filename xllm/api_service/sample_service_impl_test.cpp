@@ -141,5 +141,97 @@ TEST(SampleServiceImplTest, BuildRequestParamsAndEmptyResponseForSelectorMiss) {
   EXPECT_EQ(response.usage().total_tokens(), expected_prompt_tokens);
 }
 
+TEST(SampleServiceImplTest,
+     BuildResponseSortsBySampleIdAndSerializesTopLogprobs) {
+  RequestOutput req_output;
+  Usage usage;
+  usage.num_prompt_tokens = 8;
+  usage.num_generated_tokens = 2;
+  usage.num_total_tokens = 10;
+  req_output.usage = usage;
+
+  SequenceOutput missing_output;
+  missing_output.index = 1;
+  missing_output.finish_reason = "empty_logprobs";
+
+  SequenceOutput sampled_output;
+  sampled_output.index = 0;
+  sampled_output.text = "stale";
+  LogProb sampled_logprob;
+  sampled_logprob.token = "True";
+  sampled_logprob.token_id = 101;
+  sampled_logprob.logprob = -0.10f;
+  std::vector<LogProbData> top_logprobs;
+  LogProbData top1;
+  top1.token = "True";
+  top1.token_id = 101;
+  top1.logprob = -0.10f;
+  top_logprobs.push_back(top1);
+  LogProbData top2;
+  top2.token = "False";
+  top2.token_id = 102;
+  top2.logprob = -2.30f;
+  top_logprobs.push_back(top2);
+  sampled_logprob.top_logprobs = top_logprobs;
+  sampled_output.logprobs = std::vector<LogProb>{sampled_logprob};
+
+  req_output.outputs = {missing_output, sampled_output};
+
+  proto::SampleResponse response;
+  ASSERT_TRUE(sample_service_internal::build_response(
+      "sample-123", "mtp", 1773369600U, req_output, &response));
+
+  EXPECT_EQ(response.id(), "sample-123");
+  EXPECT_EQ(response.object(), "sample_completion");
+  EXPECT_EQ(response.created(), 1773369600U);
+  EXPECT_EQ(response.model(), "mtp");
+  ASSERT_EQ(response.choices_size(), 2);
+
+  EXPECT_EQ(response.choices(0).index(), 0);
+  EXPECT_EQ(response.choices(0).text(), "True");
+  EXPECT_EQ(response.choices(0).finish_reason(), "selector_match");
+  ASSERT_TRUE(response.choices(0).has_logprobs());
+  EXPECT_EQ(response.choices(0).logprobs().tokens_size(), 2);
+  EXPECT_EQ(response.choices(0).logprobs().tokens(0), "True");
+  EXPECT_EQ(response.choices(0).logprobs().tokens(1), "False");
+  EXPECT_EQ(response.choices(0).logprobs().token_ids(0), 101);
+  EXPECT_EQ(response.choices(0).logprobs().token_ids(1), 102);
+
+  EXPECT_EQ(response.choices(1).index(), 1);
+  EXPECT_TRUE(response.choices(1).text().empty());
+  EXPECT_EQ(response.choices(1).finish_reason(), "empty_logprobs");
+  EXPECT_FALSE(response.choices(1).has_logprobs());
+
+  ASSERT_TRUE(response.has_usage());
+  EXPECT_EQ(response.usage().prompt_tokens(), 8);
+  EXPECT_EQ(response.usage().completion_tokens(), 2);
+  EXPECT_EQ(response.usage().total_tokens(), 10);
+}
+
+TEST(SampleServiceImplTest, BuildResponseFallsBackToSelectedTokenLogprob) {
+  RequestOutput req_output;
+
+  SequenceOutput sampled_output;
+  sampled_output.index = 0;
+  LogProb sampled_logprob;
+  sampled_logprob.token = "Maybe";
+  sampled_logprob.token_id = 201;
+  sampled_logprob.logprob = -0.25f;
+  sampled_output.logprobs = std::vector<LogProb>{sampled_logprob};
+  req_output.outputs = {sampled_output};
+
+  proto::SampleResponse response;
+  ASSERT_TRUE(sample_service_internal::build_response(
+      "sample-456", "mtp", 1773369601U, req_output, &response));
+
+  ASSERT_EQ(response.choices_size(), 1);
+  EXPECT_EQ(response.choices(0).text(), "Maybe");
+  EXPECT_EQ(response.choices(0).finish_reason(), "selector_match");
+  ASSERT_TRUE(response.choices(0).has_logprobs());
+  EXPECT_EQ(response.choices(0).logprobs().tokens_size(), 1);
+  EXPECT_EQ(response.choices(0).logprobs().tokens(0), "Maybe");
+  EXPECT_EQ(response.choices(0).logprobs().token_ids(0), 201);
+}
+
 }  // namespace
 }  // namespace xllm
