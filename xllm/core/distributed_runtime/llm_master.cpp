@@ -306,6 +306,31 @@ std::shared_ptr<Request> LLMMaster::generate_request(
 
   COUNTER_ADD(tokenization_latency_seconds, timer.elapsed_seconds());
 
+  std::vector<SampleSlot> runtime_sample_slots = sp.sample_slots;
+  if (sp.is_sample_request && !runtime_sample_slots.empty() &&
+      sp.add_special_tokens) {
+    std::vector<int32_t> prompt_tokens_without_special;
+    if (!tokenizer_->encode(prompt, &prompt_tokens_without_special, false)) {
+      CALLBACK_WITH_ERROR(StatusCode::INVALID_ARGUMENT,
+                          "Failed to encode sample prompt without special "
+                          "tokens",
+                          sp.service_request_id);
+      return nullptr;
+    }
+    if (local_prompt_tokens.size() < prompt_tokens_without_special.size()) {
+      CALLBACK_WITH_ERROR(StatusCode::UNKNOWN,
+                          "Sample prompt token count is inconsistent",
+                          sp.service_request_id);
+      return nullptr;
+    }
+
+    const size_t special_token_offset =
+        local_prompt_tokens.size() - prompt_tokens_without_special.size();
+    for (auto& sample_slot : runtime_sample_slots) {
+      sample_slot.token_position += special_token_offset;
+    }
+  }
+
   int32_t max_context_len = model_args_.max_position_embeddings();
   if (!options_.enable_chunked_prefill()) {
     max_context_len =
@@ -453,6 +478,7 @@ std::shared_ptr<Request> LLMMaster::generate_request(
                          batch_callback,
                          sp.decode_address,
                          call);
+  req_state.sample_slots = std::move(runtime_sample_slots);
 
   auto request = std::make_shared<Request>(sp.request_id,
                                            sp.x_request_id,
