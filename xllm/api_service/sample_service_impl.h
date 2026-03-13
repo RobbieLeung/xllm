@@ -15,14 +15,37 @@ limitations under the License.
 
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 #include "api_service/api_service_impl.h"
 #include "api_service/non_stream_call.h"
 #include "core/common/types.h"
+#include "core/framework/request/request_params.h"
 #include "sample.pb.h"
 
 namespace xllm {
 
 using SampleCall = NonStreamCall<proto::SampleRequest, proto::SampleResponse>;
+
+namespace sample_service_internal {
+
+inline constexpr uint32_t kDefaultSampleLogprobs = 5;
+inline constexpr uint32_t kMinSampleLogprobs = 1;
+inline constexpr uint32_t kMaxSampleLogprobs = 5;
+
+Status validate_request(const proto::SampleRequest& request);
+
+bool build_request_params(const proto::SampleRequest& request,
+                          const Tokenizer& tokenizer,
+                          RequestParams* request_params);
+
+bool build_empty_response(const proto::SampleRequest& request,
+                          const Tokenizer& tokenizer,
+                          const std::string& request_id,
+                          proto::SampleResponse* response);
+
+}  // namespace sample_service_internal
 
 class SampleServiceImpl final : public APIServiceImpl<SampleCall> {
  public:

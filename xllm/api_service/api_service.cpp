@@ -53,6 +53,11 @@ google::protobuf::Arena* GetArenaWithCheck(
     return message->GetArena();
   }
 }
+
+std::string build_sample_backend_error_message() {
+  return "Current backend '" + FLAGS_backend +
+         "' does not support /v1/sample; only llm is supported";
+}
 }  // namespace
 
 APIService::APIService(Master* master,
@@ -219,7 +224,7 @@ void APIService::Sample(::google::protobuf::RpcController* controller,
 
   auto ctrl = reinterpret_cast<brpc::Controller*>(controller);
   if (FLAGS_backend != "llm") {
-    ctrl->SetFailed("Sample API is only supported for LLM backend");
+    ctrl->SetFailed(build_sample_backend_error_message());
     return;
   }
   CHECK(sample_service_impl_) << " sample service is invalid.";
@@ -246,7 +251,7 @@ void APIService::SampleHttp(::google::protobuf::RpcController* controller,
 
   auto ctrl = reinterpret_cast<brpc::Controller*>(controller);
   if (FLAGS_backend != "llm") {
-    ctrl->SetFailed("Sample API is only supported for LLM backend");
+    ctrl->SetFailed(build_sample_backend_error_message());
     return;
   }
   CHECK(sample_service_impl_) << " sample service is invalid.";
