@@ -200,7 +200,10 @@ TEST(SampleServiceImplTest,
   EXPECT_EQ(response.choices(1).index(), 1);
   EXPECT_TRUE(response.choices(1).text().empty());
   EXPECT_EQ(response.choices(1).finish_reason(), "empty_logprobs");
-  EXPECT_FALSE(response.choices(1).has_logprobs());
+  ASSERT_TRUE(response.choices(1).has_logprobs());
+  EXPECT_EQ(response.choices(1).logprobs().tokens_size(), 0);
+  EXPECT_EQ(response.choices(1).logprobs().token_ids_size(), 0);
+  EXPECT_EQ(response.choices(1).logprobs().token_logprobs_size(), 0);
 
   ASSERT_TRUE(response.has_usage());
   EXPECT_EQ(response.usage().prompt_tokens(), 8);

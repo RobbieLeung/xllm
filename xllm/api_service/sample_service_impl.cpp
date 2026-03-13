@@ -101,6 +101,51 @@ std::string get_finish_reason(const SequenceOutput& output) {
                                      : kEmptyLogprobsFinishReason;
 }
 
+uint32_t get_requested_logprobs(const proto::SampleRequest& request) {
+  return request.has_logprobs() ? request.logprobs()
+                                : sample_service_internal::kDefaultSampleLogprobs;
+}
+
+void log_dispatched_request(const std::string& request_id,
+                            const std::string& model,
+                            size_t match_count,
+                            uint32_t top_logprobs) {
+  LOG(INFO) << "Sample request dispatched, request_id=" << request_id
+            << ", model=" << model << ", match_count=" << match_count
+            << ", top_logprobs=" << top_logprobs;
+}
+
+void log_fast_return(const std::string& request_id,
+                     const std::string& model,
+                     size_t match_count) {
+  LOG(INFO) << "Sample request fast-returned, request_id=" << request_id
+            << ", model=" << model << ", match_count=" << match_count;
+}
+
+void log_finished_request(const std::string& request_id,
+                          const std::string& model,
+                          size_t match_count,
+                          const RequestOutput& req_output) {
+  size_t empty_logprobs_count = 0;
+  for (const auto& output : req_output.outputs) {
+    if (!has_choice_logprobs(output)) {
+      ++empty_logprobs_count;
+      LOG(WARNING) << "Sample request empty logprobs fallback, request_id="
+                   << request_id << ", sample_id=" << output.index
+                   << ", model=" << model;
+      continue;
+    }
+    VLOG(1) << "Sample request choice ready, request_id=" << request_id
+            << ", sample_id=" << output.index << ", model=" << model
+            << ", finish_reason=" << get_finish_reason(output);
+  }
+
+  LOG(INFO) << "Sample request finished, request_id=" << request_id
+            << ", model=" << model << ", match_count=" << match_count
+            << ", returned_choices=" << req_output.outputs.size()
+            << ", empty_logprobs=" << empty_logprobs_count;
+}
+
 Status get_rate_limit_status(LLMMaster* master) {
   CHECK(master != nullptr);
   if (!master->get_rate_limiter()->is_limited()) {
@@ -232,6 +277,9 @@ bool build_response(const std::string& request_id,
     choice->set_index(output->index);
     choice->set_text(get_choice_text(*output));
     set_choice_logprobs(choice, output->logprobs);
+    if (!has_choice_logprobs(*output)) {
+      choice->mutable_logprobs();
+    }
     choice->set_finish_reason(get_finish_reason(*output));
   }
 
@@ -287,9 +335,7 @@ bool SampleServiceImpl::process_request(const proto::SampleRequest& request,
       return false;
     }
     *status = Status();
-    LOG(INFO) << "Sample request fast-returned with no selector matches for "
-              << "model " << request.model()
-              << ", request_id=" << request_params.request_id;
+    log_fast_return(request_params.request_id, request.model(), 0);
     return true;
   }
 
@@ -303,8 +349,12 @@ bool SampleServiceImpl::process_request(const proto::SampleRequest& request,
   std::mutex mu;
   std::condition_variable cv;
   const auto request_id = request_params.request_id;
+  const size_t match_count = request_params.sample_slots.size();
   const auto created_time =
       static_cast<uint32_t>(absl::ToUnixSeconds(absl::Now()));
+
+  log_dispatched_request(
+      request_id, request.model(), match_count, get_requested_logprobs(request));
 
   master_->handle_request(
       request.prompt(),
@@ -349,6 +399,7 @@ bool SampleServiceImpl::process_request(const proto::SampleRequest& request,
     *status = Status(StatusCode::UNKNOWN, "Failed to build sample response");
     return false;
   }
+  log_finished_request(request_id, request.model(), match_count, final_output);
   *status = Status();
   return true;
 }
@@ -381,9 +432,7 @@ void SampleServiceImpl::process_async_impl(std::shared_ptr<SampleCall> call) {
                               "Failed to build sample no-match response");
       return;
     }
-    LOG(INFO) << "Sample request fast-returned with no selector matches for "
-              << "model " << request.model()
-              << ", request_id=" << request_params.request_id;
+    log_fast_return(request_params.request_id, request.model(), 0);
     call->write_and_finish(call->response());
     return;
   }
@@ -395,8 +444,11 @@ void SampleServiceImpl::process_async_impl(std::shared_ptr<SampleCall> call) {
   }
 
   const auto request_id = request_params.request_id;
+  const size_t match_count = request_params.sample_slots.size();
   const auto created_time =
       static_cast<uint32_t>(absl::ToUnixSeconds(absl::Now()));
+  log_dispatched_request(
+      request_id, request.model(), match_count, get_requested_logprobs(request));
   master_->handle_request(
       request.prompt(),
       std::nullopt,
@@ -406,6 +458,7 @@ void SampleServiceImpl::process_async_impl(std::shared_ptr<SampleCall> call) {
        master = master_,
        model = request.model(),
        request_id,
+       match_count,
        created_time](const RequestOutput& req_output) -> bool {
         req_output.log_request_status();
         if (req_output.status.has_value()) {
@@ -430,6 +483,7 @@ void SampleServiceImpl::process_async_impl(std::shared_ptr<SampleCall> call) {
           return call->finish_with_error(StatusCode::UNKNOWN,
                                          "Failed to build sample response");
         }
+        log_finished_request(request_id, model, match_count, req_output);
         return call->write_and_finish(call->response());
       });
 }
