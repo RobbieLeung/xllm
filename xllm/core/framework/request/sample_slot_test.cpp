@@ -18,10 +18,13 @@ limitations under the License.
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "framework/block/block_manager_impl.h"
+#include "platform/device.h"
 #include "request.h"
 #include "request_state.h"
 
@@ -44,6 +47,29 @@ class CharTokenizer final : public Tokenizer {
       ids->push_back(static_cast<unsigned char>(ch));
     }
     return true;
+  }
+
+  std::string decode(const Slice<int32_t>& ids,
+                     bool skip_special_tokens) const override {
+    std::string text;
+    for (const auto token_id : ids) {
+      if (skip_special_tokens && token_id == kBosTokenId) {
+        continue;
+      }
+      text.push_back(static_cast<char>(token_id));
+    }
+    return text;
+  }
+
+  std::string id_to_token(int32_t id) const override {
+    if (id == kBosTokenId) {
+      return "<bos>";
+    }
+    return std::string(1, static_cast<char>(id));
+  }
+
+  std::unique_ptr<Tokenizer> clone() const override {
+    return std::make_unique<CharTokenizer>();
   }
 
  private:
@@ -121,6 +147,89 @@ TEST(SampleSlotTest, RequestPropagatesSampleSlotsToSequenceRuntime) {
   EXPECT_EQ(runtime_sample_slots[0].token_position, 2);
   EXPECT_EQ(runtime_sample_slots[1].sample_id, 1);
   EXPECT_EQ(runtime_sample_slots[1].selector_match_offset, 4);
+}
+
+TEST(SampleSlotTest, RequestOutputSplitsSampleResultsBySampleId) {
+  torch::Device device(Device::type_torch(), 0);
+  BlockManager::Options options;
+  options.num_blocks(4).block_size(4);
+  BlockManagerImpl manager(options);
+
+  CharTokenizer tokenizer;
+  RequestSamplingParam sampling_param;
+  sampling_param.logprobs = true;
+  sampling_param.top_logprobs = 2;
+
+  StoppingChecker stopping_checker;
+  stopping_checker.set_max_generated_tokens(1);
+
+  RequestState request_state("abc",
+                             std::vector<int32_t>{1, 'a', 'b', 'c'},
+                             sampling_param,
+                             SchedulerParam{},
+                             stopping_checker,
+                             /*seq_capacity=*/8,
+                             /*n=*/1,
+                             /*best_of=*/1,
+                             /*logprobs=*/true,
+                             /*stream=*/false,
+                             /*echo=*/false,
+                             /*skip_special_tokens=*/true,
+                             /*enable_schedule_overlap=*/false,
+                             [](const RequestOutput&) { return true; },
+                             OutputsFunc{});
+
+  SampleSlot first_slot;
+  first_slot.request_id = "sample-req";
+  first_slot.sequence_index = 0;
+  first_slot.sample_id = 0;
+  first_slot.token_position = 1;
+
+  SampleSlot second_slot = first_slot;
+  second_slot.sample_id = 1;
+  second_slot.token_position = 2;
+
+  request_state.sample_slots = {first_slot, second_slot};
+
+  Request request("sample-req", "", "", request_state);
+  auto* seq = request.sequences()[0].get();
+  seq->add_kv_blocks(manager.allocate(1));
+  seq->kv_state().set_kv_cache_tokens_num(seq->num_prompt_tokens());
+
+  std::vector<int64_t> top_tokens = {'X', 'Y'};
+  std::vector<float> top_logprobs = {-0.10f, -1.20f};
+  Token first_token('X');
+  first_token.logprob = -0.10f;
+  first_token.top_tokens = top_tokens;
+  first_token.top_logprobs = top_logprobs;
+  seq->append_token(first_token);
+
+  Token missing_logprob_token('Z');
+  seq->append_token(missing_logprob_token);
+
+  RequestOutput output = request.generate_output(tokenizer);
+
+  ASSERT_TRUE(output.status.has_value());
+  EXPECT_TRUE(output.status->ok());
+  ASSERT_TRUE(output.usage.has_value());
+  EXPECT_EQ(output.usage->num_generated_tokens, 2);
+  ASSERT_EQ(output.outputs.size(), 2);
+
+  EXPECT_EQ(output.outputs[0].index, 0U);
+  EXPECT_EQ(output.outputs[0].text, "X");
+  ASSERT_TRUE(output.outputs[0].logprobs.has_value());
+  ASSERT_EQ(output.outputs[0].logprobs->size(), 1);
+  EXPECT_EQ(output.outputs[0].logprobs->front().token, "X");
+  ASSERT_TRUE(output.outputs[0].logprobs->front().top_logprobs.has_value());
+  ASSERT_EQ(output.outputs[0].logprobs->front().top_logprobs->size(), 2);
+  EXPECT_EQ(output.outputs[0].logprobs->front().top_logprobs->at(0).token,
+            "X");
+
+  EXPECT_EQ(output.outputs[1].index, 1U);
+  EXPECT_TRUE(output.outputs[1].text.empty());
+  EXPECT_FALSE(output.outputs[1].logprobs.has_value());
+  ASSERT_TRUE(output.outputs[1].finish_reason.has_value());
+  EXPECT_EQ(output.outputs[1].finish_reason.value(), "empty_logprobs");
 }
 
 }  // namespace

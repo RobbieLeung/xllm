@@ -220,6 +220,8 @@ class Sequence final {
   // get the full output of the sequence
   SequenceOutput generate_output(const Tokenizer& tokenizer);
   SequenceOutput generate_output();
+  void generate_sample_outputs(std::vector<SequenceOutput>& outputs,
+                               const Tokenizer& tokenizer);
 
   // get the sampling parameters
   const RequestSamplingParam* sampling_param() const {
