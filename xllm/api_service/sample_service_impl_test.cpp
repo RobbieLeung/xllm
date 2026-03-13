@@ -142,6 +142,33 @@ TEST(SampleServiceImplTest, BuildRequestParamsAndEmptyResponseForSelectorMiss) {
 }
 
 TEST(SampleServiceImplTest,
+     BuildRequestParamsKeepsExplicitRequestIdAndMatchedSampleSlots) {
+  CharTokenizer tokenizer;
+  auto request = make_valid_request();
+  request.set_prompt("A<emb_0>B<emb_0>C");
+  request.set_request_id("sample-explicit");
+  request.set_logprobs(4);
+
+  RequestParams params;
+  ASSERT_TRUE(
+      sample_service_internal::build_request_params(request, tokenizer, &params));
+
+  EXPECT_EQ(params.request_id, "sample-explicit");
+  EXPECT_TRUE(params.logprobs);
+  EXPECT_EQ(params.top_logprobs, 4);
+  EXPECT_TRUE(params.is_sample_request);
+  ASSERT_EQ(params.sample_slots.size(), 2);
+  EXPECT_EQ(params.sample_slots[0].request_id, "sample-explicit");
+  EXPECT_EQ(params.sample_slots[0].sample_id, 0);
+  EXPECT_EQ(params.sample_slots[0].token_position, 1);
+  EXPECT_EQ(params.sample_slots[0].selector_match_offset, 1);
+  EXPECT_EQ(params.sample_slots[1].request_id, "sample-explicit");
+  EXPECT_EQ(params.sample_slots[1].sample_id, 1);
+  EXPECT_EQ(params.sample_slots[1].token_position, 9);
+  EXPECT_EQ(params.sample_slots[1].selector_match_offset, 9);
+}
+
+TEST(SampleServiceImplTest,
      BuildResponseSortsBySampleIdAndSerializesTopLogprobs) {
   RequestOutput req_output;
   Usage usage;

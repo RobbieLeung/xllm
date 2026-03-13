@@ -232,5 +232,78 @@ TEST(SampleSlotTest, RequestOutputSplitsSampleResultsBySampleId) {
   EXPECT_EQ(output.outputs[1].finish_reason.value(), "empty_logprobs");
 }
 
+TEST(SampleSlotTest, RequestOutputStableSortsOutOfOrderSampleIds) {
+  torch::Device device(Device::type_torch(), 0);
+  BlockManager::Options options;
+  options.num_blocks(4).block_size(4);
+  BlockManagerImpl manager(options);
+
+  CharTokenizer tokenizer;
+  RequestSamplingParam sampling_param;
+  sampling_param.logprobs = true;
+
+  StoppingChecker stopping_checker;
+  stopping_checker.set_max_generated_tokens(1);
+
+  RequestState request_state("abc",
+                             std::vector<int32_t>{1, 'a', 'b', 'c'},
+                             sampling_param,
+                             SchedulerParam{},
+                             stopping_checker,
+                             /*seq_capacity=*/8,
+                             /*n=*/1,
+                             /*best_of=*/1,
+                             /*logprobs=*/true,
+                             /*stream=*/false,
+                             /*echo=*/false,
+                             /*skip_special_tokens=*/true,
+                             /*enable_schedule_overlap=*/false,
+                             [](const RequestOutput&) { return true; },
+                             OutputsFunc{});
+
+  SampleSlot slot2;
+  slot2.request_id = "sample-req";
+  slot2.sequence_index = 0;
+  slot2.sample_id = 2;
+  slot2.token_position = 1;
+
+  SampleSlot slot0 = slot2;
+  slot0.sample_id = 0;
+  slot0.token_position = 2;
+
+  SampleSlot slot1 = slot2;
+  slot1.sample_id = 1;
+  slot1.token_position = 3;
+
+  request_state.sample_slots = {slot2, slot0, slot1};
+
+  Request request("sample-req", "", "", request_state);
+  auto* seq = request.sequences()[0].get();
+  seq->add_kv_blocks(manager.allocate(1));
+  seq->kv_state().set_kv_cache_tokens_num(seq->num_prompt_tokens());
+
+  Token slot2_token('C');
+  slot2_token.logprob = -0.30f;
+  seq->append_token(slot2_token);
+
+  Token slot0_token('A');
+  slot0_token.logprob = -0.10f;
+  seq->append_token(slot0_token);
+
+  Token slot1_token('B');
+  slot1_token.logprob = -0.20f;
+  seq->append_token(slot1_token);
+
+  RequestOutput output = request.generate_output(tokenizer);
+
+  ASSERT_EQ(output.outputs.size(), 3);
+  EXPECT_EQ(output.outputs[0].index, 0U);
+  EXPECT_EQ(output.outputs[0].text, "A");
+  EXPECT_EQ(output.outputs[1].index, 1U);
+  EXPECT_EQ(output.outputs[1].text, "B");
+  EXPECT_EQ(output.outputs[2].index, 2U);
+  EXPECT_EQ(output.outputs[2].text, "C");
+}
+
 }  // namespace
 }  // namespace xllm
